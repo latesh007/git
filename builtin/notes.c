@@ -24,6 +24,7 @@
 #include "notes-utils.h"
 #include "worktree.h"
 
+static char *separator = NULL;
 static const char * const git_notes_usage[] = {
 	N_("git notes [--ref <notes-ref>] [list [<object>]]"),
 	N_("git notes [--ref <notes-ref>] add [-f] [--allow-empty] [-m <msg> | -F <file> | (-c | -C) <object>] [<object>]"),
@@ -207,6 +208,16 @@ static void write_note_data(struct note_data *d, struct object_id *oid)
 				    d->edit_path);
 		exit(status);
 	}
+}
+
+static void insert_separator(struct strbuf *message, size_t pos)
+{
+	if (!separator)
+		strbuf_insertstr(message, pos, "\n");
+	else if (separator[strlen(separator) - 1] == '\n')
+		strbuf_insertstr(message, pos, separator);
+	else
+		strbuf_insertf(message, pos, "%s%s", separator, "\n");
 }
 
 static int parse_msg_arg(const struct option *opt, const char *arg, int unset)
@@ -567,11 +578,12 @@ static int append_edit(int argc, const char **argv, const char *prefix)
 	const struct object_id *note;
 	char *logmsg;
 	const char * const *usage;
+	size_t message_idx;
 	struct note_data d = { .buf = STRBUF_INIT };
+	struct string_list message = STRING_LIST_INIT_DUP;
 	struct option options[] = {
-		OPT_CALLBACK_F('m', "message", &d, N_("message"),
-			N_("note contents as a string"), PARSE_OPT_NONEG,
-			parse_msg_arg),
+		OPT_STRING_LIST('m', "message", &message, N_("message"),
+			N_("note contents as a string")),
 		OPT_CALLBACK_F('F', "file", &d, N_("file"),
 			N_("note contents in a file"), PARSE_OPT_NONEG,
 			parse_file_arg),
@@ -583,6 +595,8 @@ static int append_edit(int argc, const char **argv, const char *prefix)
 			parse_reuse_arg),
 		OPT_BOOL(0, "allow-empty", &allow_empty,
 			N_("allow storing empty note")),
+		OPT_STRING(0, "separator", &separator, N_("separator"),
+			N_("insert <separator> as separator before appending a message")),
 		OPT_END()
 	};
 	int edit = !strcmp(argv[0], "edit");
@@ -594,6 +608,15 @@ static int append_edit(int argc, const char **argv, const char *prefix)
 	if (2 < argc) {
 		error(_("too many arguments"));
 		usage_with_options(usage, options);
+	}
+
+	for (message_idx = 0; message_idx < message.nr; message_idx++) {
+		if (d.buf.len)
+			insert_separator(&d.buf, d.buf.len);
+		strbuf_insertstr(&d.buf, d.buf.len,
+				 message.items[message_idx].string);
+		strbuf_stripspace(&d.buf, 0);
+		d.given = 1;
 	}
 
 	if (d.given && edit)
@@ -618,7 +641,7 @@ static int append_edit(int argc, const char **argv, const char *prefix)
 		char *prev_buf = read_object_file(note, &type, &size);
 
 		if (d.buf.len && prev_buf && size)
-			strbuf_insertstr(&d.buf, 0, "\n");
+			insert_separator(&d.buf, 0);
 		if (prev_buf && size)
 			strbuf_insert(&d.buf, 0, prev_buf, size);
 		free(prev_buf);
